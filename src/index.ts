@@ -11,12 +11,10 @@ import chalk from 'chalk';
 import fs from 'fs/promises'; // Use promises for async operations
 import path from 'path';
 import { logger } from './logger.js';
-// import { fileURLToPath } from 'url'; // Removed import.meta.url usage
+import { BASE_PATH } from './utils/path.js';
 
 // --- Constants ---
 const MEMORY_BANK_DIR_NAME = "memory-bank";
-// Use process.cwd() which should be the project root when the server is run
-const BASE_PATH = process.cwd();
 const MEMORY_BANK_PATH = path.join(BASE_PATH, MEMORY_BANK_DIR_NAME);
 
 const INITIAL_FILES: { [key: string]: string } = {

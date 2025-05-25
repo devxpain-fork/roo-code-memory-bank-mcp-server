@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { BASE_PATH } from './utils/path.js';
 
-const LOG_FILE_PATH = path.join(process.cwd(), 'logs', 'memory-bank.log');
+const LOG_FILE_PATH = path.join(BASE_PATH, 'logs', 'memory-bank.log');
 const LOG_DIR = path.dirname(LOG_FILE_PATH);
 
 class Logger {
