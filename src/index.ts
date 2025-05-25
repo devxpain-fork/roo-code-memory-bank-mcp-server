@@ -10,6 +10,7 @@ import {
 import chalk from 'chalk';
 import fs from 'fs/promises'; // Use promises for async operations
 import path from 'path';
+import { logger } from './logger.js';
 // import { fileURLToPath } from 'url'; // Removed import.meta.url usage
 
 // --- Constants ---
@@ -284,6 +285,14 @@ async function runServer() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(chalk.green("Roo Memory Bank MCP Server running on stdio"));
+
+  // Log environment and process details at startup
+  logger.info('--- Server Initialization Details ---');
+  logger.logProcessDetails();
+  logger.logEnvironment();
+  logger.info(`Current BASE_PATH: ${BASE_PATH}`);
+  logger.info(`Memory Bank Path: ${MEMORY_BANK_PATH}`);
+  logger.info('Roo Memory Bank MCP Server initialized.');
 }
 
 runServer().catch((error) => {

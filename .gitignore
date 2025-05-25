@@ -10,3 +10,6 @@ memory-bank/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Logging
+logs/
