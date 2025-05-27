@@ -84,33 +84,42 @@ const READ_MEMORY_BANK_TOOL: Tool = {
   }
 };
 
-const APPEND_MEMORY_BANK_ENTRY_TOOL: Tool = {
-  name: "append_memory_bank_entry",
-  description: "Appends a new, timestamped entry to a specified file, optionally under a specific markdown header.",
+const APPEND_MEMORY_BANK_TOOL: Tool = {
+  name: "append_memory_bank",
+  description: "Appends one or more timestamped entries to specified memory bank files, optionally under specific markdown headers. Each entry can target a different file.",
   inputSchema: {
     type: "object",
     properties: {
-      file_name: {
-        type: "string",
-        description: "The name of the memory bank file to append to."
-      },
-      entry: {
-        type: "string",
-        description: "The content of the entry to append."
-      },
-      section_header: {
-        type: "string",
-        description: "(Optional) The exact markdown header (e.g., '## Decision') to append under."
+      entries: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            file_name: {
+              type: "string",
+              description: "The name of the memory bank file to append to."
+            },
+            entry: {
+              type: "string",
+              description: "The content of the entry to append."
+            },
+            section_header: {
+              type: "string",
+              description: "(Optional) The exact markdown header (e.g., '## Decision') to append under."
+            }
+          },
+          required: ["file_name", "entry"]
+        }
       }
     },
-    required: ["file_name", "entry"]
+    required: ["entries"]
   }
   // Output: Confirmation message (handled in implementation)
 };
 
 const ALL_TOOLS = [
   READ_MEMORY_BANK_TOOL,
-  APPEND_MEMORY_BANK_ENTRY_TOOL
+  APPEND_MEMORY_BANK_TOOL
 ];
 
 // --- Server Logic ---
@@ -175,56 +184,57 @@ class RooMemoryBankServer {
     return { content: [{ type: "text", text: JSON.stringify({ files: results }, null, 2) }] };
   }
 
-  async appendMemoryBankEntry(input: any): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
-    await this._ensureInitialized(); // Ensure memory bank is initialized
+  async appendMemoryBank(input: any): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    await this._ensureInitialized();
 
-    const { file_name: fileName, entry, section_header: sectionHeader } = input;
+    const entries: Array<{ file_name: string; entry: string; section_header?: string }> = input?.entries;
 
-    if (!fileName || typeof fileName !== 'string') {
-      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Missing or invalid 'file_name' parameter." }, null, 2) }], isError: true };
-    }
-    if (!entry || typeof entry !== 'string') {
-      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Missing or invalid 'entry' parameter." }, null, 2) }], isError: true };
+    if (!Array.isArray(entries) || !entries.every(e => typeof e === 'object' && e !== null && typeof e.file_name === 'string' && typeof e.entry === 'string')) {
+      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Invalid 'entries' parameter. Must be an array of objects with 'file_name' and 'entry'." }, null, 2) }], isError: true };
     }
 
-    const filePath = path.join(MEMORY_BANK_PATH, fileName);
-    const timestamp = getCurrentTimestamp();
-    const formattedEntry = `\n[${timestamp}] - ${entry}\n`;
+    const results: Array<{ file: string; status: string; message: string }> = [];
 
-    try {
-      if (sectionHeader && typeof sectionHeader === 'string') {
-        let fileContent = "";
-        try {
-          fileContent = await fs.readFile(filePath, 'utf-8');
-        } catch (readError: any) {
-          if (readError.code === 'ENOENT') { // File doesn't exist, create it
-            console.warn(chalk.yellow(`File ${fileName} not found, creating.`));
-            const initialTemplate = INITIAL_FILES[fileName] ? INITIAL_FILES[fileName].replace('YYYY-MM-DD HH:MM:SS', timestamp) : '';
-            fileContent = initialTemplate;
-          } else {
-            throw readError;
+    for (const { file_name: fileName, entry, section_header: sectionHeader } of entries) {
+      const filePath = path.join(MEMORY_BANK_PATH, fileName);
+      const timestamp = getCurrentTimestamp();
+      const formattedEntry = `\n[${timestamp}] - ${entry}\n`;
+
+      try {
+        if (sectionHeader && typeof sectionHeader === 'string') {
+          let fileContent = "";
+          try {
+            fileContent = await fs.readFile(filePath, 'utf-8');
+          } catch (readError: any) {
+            if (readError.code === 'ENOENT') {
+              console.warn(chalk.yellow(`File ${fileName} not found, creating.`));
+              const initialTemplate = INITIAL_FILES[fileName] ? INITIAL_FILES[fileName].replace('YYYY-MM-DD HH:MM:SS', timestamp) : '';
+              fileContent = initialTemplate;
+            } else {
+              throw readError;
+            }
           }
-        }
 
-        const headerIndex = fileContent.indexOf(sectionHeader);
-        if (headerIndex !== -1) {
-          const nextHeaderIndex = fileContent.indexOf('\n##', headerIndex + sectionHeader.length);
-          const insertIndex = (nextHeaderIndex !== -1) ? nextHeaderIndex : fileContent.length;
-          const updatedContent = fileContent.slice(0, insertIndex).trimEnd() + '\n' + formattedEntry.trimStart() + fileContent.slice(insertIndex);
-          await fs.writeFile(filePath, updatedContent);
+          const headerIndex = fileContent.indexOf(sectionHeader);
+          if (headerIndex !== -1) {
+            const nextHeaderIndex = fileContent.indexOf('\n##', headerIndex + sectionHeader.length);
+            const insertIndex = (nextHeaderIndex !== -1) ? nextHeaderIndex : fileContent.length;
+            const updatedContent = fileContent.slice(0, insertIndex).trimEnd() + '\n' + formattedEntry.trimStart() + fileContent.slice(insertIndex);
+            await fs.writeFile(filePath, updatedContent);
+          } else {
+            console.warn(chalk.yellow(`Header "${sectionHeader}" not found in ${fileName}. Appending header and entry to the end.`));
+            await fs.appendFile(filePath, `\n${sectionHeader}\n${formattedEntry}`);
+          }
         } else {
-          console.warn(chalk.yellow(`Header "${sectionHeader}" not found in ${fileName}. Appending header and entry to the end.`));
-          await fs.appendFile(filePath, `\n${sectionHeader}\n${formattedEntry}`);
+          await fs.appendFile(filePath, formattedEntry);
         }
-      } else {
-        await fs.appendFile(filePath, formattedEntry);
+        results.push({ file: fileName, status: "success", message: `Appended entry to ${fileName}` });
+      } catch (error: any) {
+        console.error(chalk.red(`Error appending to file ${fileName}:`), error);
+        results.push({ file: fileName, status: "error", message: `Failed to append to file ${fileName}: ${error.message}` });
       }
-
-      return { content: [{ type: "text", text: JSON.stringify({ status: "success", message: `Appended entry to ${fileName}` }, null, 2) }] };
-    } catch (error: any) {
-      console.error(chalk.red(`Error appending to file ${fileName}:`), error);
-      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: `Failed to append to file ${fileName}: ${error.message}` }, null, 2) }], isError: true };
     }
+    return { content: [{ type: "text", text: JSON.stringify({ results }, null, 2) }] };
   }
 }
 
@@ -258,8 +268,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (toolName) {
     case "read_memory_bank":
       return memoryBankServer.readMemoryBank(args);
-    case "append_memory_bank_entry":
-      return memoryBankServer.appendMemoryBankEntry(args);
+    case "append_memory_bank":
+      return memoryBankServer.appendMemoryBank(args);
     default:
       console.error(chalk.red(`Unknown tool requested: ${toolName}`));
       return {
