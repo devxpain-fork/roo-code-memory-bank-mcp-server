@@ -6,16 +6,10 @@ This project implements the core functionality of the [Roo Code Memory Bank](htt
 
 This MCP server provides the following tools:
 
-*   **`initialize_memory_bank`**: Creates the `memory-bank/` directory and standard `.md` files (`productContext.md`, `activeContext.md`, `progress.md`, `decisionLog.md`, `systemPatterns.md`) with initial templates.
-    *   *Input*: (Optional) `{ "project_brief_content": string }`
-    *   *Output*: `{ "status": "success" | "error", "messages"?: string[], "message"?: string }`
-*   **`check_memory_bank_status`**: Checks if the `memory-bank/` directory exists and lists the `.md` files within it.
-    *   *Input*: `{}`
-    *   *Output*: `{ "exists": boolean, "files": string[] }`
-*   **`read_memory_bank_file`**: Reads the full content of a specified memory bank file.
-    *   *Input*: `{ "file_name": string }`
+*   **`read_memory_bank`**: When called without the `file_names` argument (or with an empty array), this tool lists available `.md` files in the memory bank directory. When an array of `file_names` is provided, it reads and returns the content of each specified file.
+    *   *Input*: `{ "file_names"?: string[] }`
     *   *Output*: `{ "content": string }` or error object.
-*   **`append_memory_bank_entry`**: Appends a new, timestamped entry to a specified file, optionally under a specific markdown header. Creates the file if it doesn't exist.
+*   **`append_memory_bank_entry`**: Appends a new, timestamped entry to a specified file, optionally under a specific markdown header.
     *   *Input*: `{ "file_name": string, "entry": string, "section_header"?: string }`
     *   *Output*: `{ "status": "success" | "error", "message": string }`
 
@@ -55,9 +49,7 @@ Find the `mcpServers` object in your settings file and add the following entry:
 
     "roo-code-memory-bank-mcp": {
       "autoApprove": [
-        "initialize_memory_bank",
-        "check_memory_bank_status",
-        "read_memory_bank_file",
+        "read_memory_bank",
         "append_memory_bank_entry"
       ],
       "disabled": false,
@@ -89,9 +81,7 @@ If you want to test it manually, you can run `npm start` from the project direct
 
 The AI assistant interacts with the server using the defined tools. The typical workflow involves:
 
-1.  Checking the memory bank status (`check_memory_bank_status`).
-2.  Initializing if needed (`initialize_memory_bank`).
-3.  Reading relevant files (`read_memory_bank_file`) to gain context.
+3.  Reading relevant files (`read_memory_bank`) to gain context.
 4.  Appending entries (`append_memory_bank_entry`) as decisions are made or progress occurs.
 
 The `memory-bank/` directory will be created in the same directory where the server process is started (which should be the root of this project directory when launched via the MCP client configuration).
@@ -112,8 +102,6 @@ Use fetch mcp with fetch_txt and fetch_markdown to find text and images on pages
 Use openrouter search to find general sentiment of topics, reviews, etc.
 
 **Utilize the `roo-code-memory-bank-mcp` server to maintain project context:**
-*   At the start of a task or significant subtask, use `check_memory_bank_status`.
-*   If the memory bank exists (`exists: true`), use `read_memory_bank_file` for relevant files (e.g., `productContext.md`, `activeContext.md`) to load the current project context.
+*   At the start of a task or significant subtask, use `read_memory_bank` for relevant files (e.g., `productContext.md`, `activeContext.md`) to load the current project context.
 *   Incorporate this loaded context into your planning and execution.
 *   When making significant decisions, progress updates, or architectural changes, use `append_memory_bank_entry` to record the information in the appropriate file (`decisionLog.md`, `progress.md`, etc.), ensuring context persistence.
-*   If the memory bank doesn't exist, consider using `initialize_memory_bank` if appropriate for the project.

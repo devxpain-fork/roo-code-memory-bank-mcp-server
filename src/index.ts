@@ -66,20 +66,22 @@ const CHECK_MEMORY_BANK_STATUS_TOOL: Tool = {
   // Output: { exists: boolean, files: string[] } (handled in implementation)
 };
 
-const READ_MEMORY_BANK_FILE_TOOL: Tool = {
-  name: "read_memory_bank_file",
-  description: "Reads the full content of a specified memory bank file.",
+const READ_MEMORY_BANK_TOOL: Tool = {
+  name: "read_memory_bank",
+  description: "Reads content from specified memory bank files, returning an object mapping file names to content (or `null` for not-found files); if `file_names` is omitted or empty, it lists all available `.md` files in the memory bank directory.",
   inputSchema: {
     type: "object",
     properties: {
-      file_name: {
-        type: "string",
-        description: "The name of the memory bank file (e.g., 'productContext.md')"
+      file_names: {
+        type: "array",
+        items: {
+          type: "string"
+        },
+        description: "An optional array of memory bank file names (e.g., ['productContext.md', 'activeContext.md']). If omitted or empty, all available .md files will be listed."
       }
     },
-    required: ["file_name"]
+    required: []
   }
-  // Output: { content: string } (handled in implementation)
 };
 
 const APPEND_MEMORY_BANK_ENTRY_TOOL: Tool = {
@@ -107,9 +109,7 @@ const APPEND_MEMORY_BANK_ENTRY_TOOL: Tool = {
 };
 
 const ALL_TOOLS = [
-  INITIALIZE_MEMORY_BANK_TOOL,
-  CHECK_MEMORY_BANK_STATUS_TOOL,
-  READ_MEMORY_BANK_FILE_TOOL,
+  READ_MEMORY_BANK_TOOL,
   APPEND_MEMORY_BANK_ENTRY_TOOL
 ];
 
@@ -117,121 +117,115 @@ const ALL_TOOLS = [
 
 class RooMemoryBankServer {
 
-  async initializeMemoryBank(input: any): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  private async _ensureInitialized(): Promise<void> {
     try {
-      await ensureMemoryBankDir();
-      let initializationMessages: string[] = [];
+      await fs.access(MEMORY_BANK_PATH);
+    } catch (error) {
+      // Directory doesn't exist, create it and initial files
+      await fs.mkdir(MEMORY_BANK_PATH, { recursive: true });
+      console.error(chalk.green(`Created memory bank directory: ${MEMORY_BANK_PATH}`));
 
       for (const [fileName, template] of Object.entries(INITIAL_FILES)) {
         const filePath = path.join(MEMORY_BANK_PATH, fileName);
         try {
           await fs.access(filePath);
-          initializationMessages.push(`File ${fileName} already exists.`);
         } catch {
-          // File doesn't exist, create it
           let content = template;
-          // Add timestamp to initial content
           content = content.replace('YYYY-MM-DD HH:MM:SS', getCurrentTimestamp());
-
-          // Special handling for project brief in productContext.md
-          if (fileName === "productContext.md" && input?.project_brief_content) {
-             content = content.replace('...', `based on project brief:\n\n${input.project_brief_content}\n\n...`);
-          }
-
           await fs.writeFile(filePath, content);
-          initializationMessages.push(`Created file: ${fileName}`);
+          console.error(chalk.green(`Created file: ${fileName}`));
         }
       }
-      return { content: [{ type: "text", text: JSON.stringify({ status: "success", messages: initializationMessages }, null, 2) }] };
-    } catch (error: any) {
-      console.error(chalk.red("Error initializing memory bank:"), error);
-      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: error.message }, null, 2) }], isError: true };
     }
   }
 
-  async checkMemoryBankStatus(): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
-     try {
-        await fs.access(MEMORY_BANK_PATH);
+  async readMemoryBank(input: any): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+    await this._ensureInitialized(); // Ensure memory bank is initialized
+
+    const fileNames: string[] | undefined = input?.file_names;
+
+    if (!fileNames || fileNames.length === 0) {
+      // If no file_names are provided, list all .md files
+      try {
         const files = await fs.readdir(MEMORY_BANK_PATH);
         const mdFiles = files.filter(f => f.endsWith('.md'));
-        return { content: [{ type: "text", text: JSON.stringify({ exists: true, files: mdFiles }, null, 2) }] };
-     } catch (error) {
-        // If access fails, directory likely doesn't exist
-        return { content: [{ type: "text", text: JSON.stringify({ exists: false, files: [] }, null, 2) }] };
-     }
-  }
+        return { content: [{ type: "text", text: JSON.stringify({ files: mdFiles }, null, 2) }] };
+      } catch (error: any) {
+        console.error(chalk.red("Error listing memory bank files:"), error);
+        return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: `Failed to list files: ${error.message}` }, null, 2) }], isError: true };
+      }
+    }
 
-  async readMemoryBankFile(input: any): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
-    const fileName = input?.file_name;
-    if (!fileName || typeof fileName !== 'string') {
-      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Missing or invalid 'file_name' parameter." }, null, 2) }], isError: true };
+    // If file_names are provided, read the specific files
+    if (!Array.isArray(fileNames) || !fileNames.every(name => typeof name === 'string')) {
+      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Invalid 'file_names' parameter. Must be an array of strings." }, null, 2) }], isError: true };
     }
-    const filePath = path.join(MEMORY_BANK_PATH, fileName);
-    try {
-      const fileContent = await fs.readFile(filePath, 'utf-8');
-      return { content: [{ type: "text", text: JSON.stringify({ content: fileContent }, null, 2) }] };
-    } catch (error: any) {
-      console.error(chalk.red(`Error reading file ${fileName}:`), error);
-      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: `Failed to read file ${fileName}: ${error.message}` }, null, 2) }], isError: true };
+
+    const results: { [key: string]: string | null } = {};
+    for (const fileName of fileNames) {
+      const filePath = path.join(MEMORY_BANK_PATH, fileName);
+      try {
+        const fileContent = await fs.readFile(filePath, 'utf-8');
+        results[fileName] = fileContent;
+      } catch (error: any) {
+        console.warn(chalk.yellow(`Warning: File ${fileName} not found or could not be read. Returning null for this file.`));
+        results[fileName] = null; // Handle file not found gracefully
+      }
     }
+    return { content: [{ type: "text", text: JSON.stringify({ files: results }, null, 2) }] };
   }
 
   async appendMemoryBankEntry(input: any): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
-     const { file_name: fileName, entry, section_header: sectionHeader } = input;
+    await this._ensureInitialized(); // Ensure memory bank is initialized
 
-     if (!fileName || typeof fileName !== 'string') {
-       return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Missing or invalid 'file_name' parameter." }, null, 2) }], isError: true };
-     }
-     if (!entry || typeof entry !== 'string') {
-       return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Missing or invalid 'entry' parameter." }, null, 2) }], isError: true };
-     }
+    const { file_name: fileName, entry, section_header: sectionHeader } = input;
 
-     const filePath = path.join(MEMORY_BANK_PATH, fileName);
-     const timestamp = getCurrentTimestamp();
-     const formattedEntry = `\n[${timestamp}] - ${entry}\n`;
+    if (!fileName || typeof fileName !== 'string') {
+      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Missing or invalid 'file_name' parameter." }, null, 2) }], isError: true };
+    }
+    if (!entry || typeof entry !== 'string') {
+      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: "Missing or invalid 'entry' parameter." }, null, 2) }], isError: true };
+    }
 
-     try {
-       await ensureMemoryBankDir(); // Ensure directory exists before appending
+    const filePath = path.join(MEMORY_BANK_PATH, fileName);
+    const timestamp = getCurrentTimestamp();
+    const formattedEntry = `\n[${timestamp}] - ${entry}\n`;
 
-       if (sectionHeader && typeof sectionHeader === 'string') {
-         let fileContent = "";
-         try {
-            fileContent = await fs.readFile(filePath, 'utf-8');
-         } catch (readError: any) {
-             if (readError.code === 'ENOENT') { // File doesn't exist, create it
-                 console.warn(chalk.yellow(`File ${fileName} not found, creating.`));
-                 // Use initial template if available, otherwise just the header and entry
-                 const initialTemplate = INITIAL_FILES[fileName] ? INITIAL_FILES[fileName].replace('YYYY-MM-DD HH:MM:SS', timestamp) : '';
-                 fileContent = initialTemplate;
-             } else {
-                 throw readError; // Re-throw other read errors
-             }
-         }
+    try {
+      if (sectionHeader && typeof sectionHeader === 'string') {
+        let fileContent = "";
+        try {
+          fileContent = await fs.readFile(filePath, 'utf-8');
+        } catch (readError: any) {
+          if (readError.code === 'ENOENT') { // File doesn't exist, create it
+            console.warn(chalk.yellow(`File ${fileName} not found, creating.`));
+            const initialTemplate = INITIAL_FILES[fileName] ? INITIAL_FILES[fileName].replace('YYYY-MM-DD HH:MM:SS', timestamp) : '';
+            fileContent = initialTemplate;
+          } else {
+            throw readError;
+          }
+        }
 
+        const headerIndex = fileContent.indexOf(sectionHeader);
+        if (headerIndex !== -1) {
+          const nextHeaderIndex = fileContent.indexOf('\n##', headerIndex + sectionHeader.length);
+          const insertIndex = (nextHeaderIndex !== -1) ? nextHeaderIndex : fileContent.length;
+          const updatedContent = fileContent.slice(0, insertIndex).trimEnd() + '\n' + formattedEntry.trimStart() + fileContent.slice(insertIndex);
+          await fs.writeFile(filePath, updatedContent);
+        } else {
+          console.warn(chalk.yellow(`Header "${sectionHeader}" not found in ${fileName}. Appending header and entry to the end.`));
+          await fs.appendFile(filePath, `\n${sectionHeader}\n${formattedEntry}`);
+        }
+      } else {
+        await fs.appendFile(filePath, formattedEntry);
+      }
 
-         const headerIndex = fileContent.indexOf(sectionHeader);
-         if (headerIndex !== -1) {
-           // Find the end of the section (next header or end of file)
-           const nextHeaderIndex = fileContent.indexOf('\n##', headerIndex + sectionHeader.length);
-           const insertIndex = (nextHeaderIndex !== -1) ? nextHeaderIndex : fileContent.length;
-           const updatedContent = fileContent.slice(0, insertIndex).trimEnd() + '\n' + formattedEntry.trimStart() + fileContent.slice(insertIndex);
-           await fs.writeFile(filePath, updatedContent);
-         } else {
-           // Header not found, append to the end with the header
-           console.warn(chalk.yellow(`Header "${sectionHeader}" not found in ${fileName}. Appending header and entry to the end.`));
-           await fs.appendFile(filePath, `\n${sectionHeader}\n${formattedEntry}`);
-         }
-       } else {
-         // No section header, just append to the end
-         await fs.appendFile(filePath, formattedEntry);
-       }
-
-       return { content: [{ type: "text", text: JSON.stringify({ status: "success", message: `Appended entry to ${fileName}` }, null, 2) }] };
-     } catch (error: any) {
-       console.error(chalk.red(`Error appending to file ${fileName}:`), error);
-       return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: `Failed to append to file ${fileName}: ${error.message}` }, null, 2) }], isError: true };
-     }
-   }
+      return { content: [{ type: "text", text: JSON.stringify({ status: "success", message: `Appended entry to ${fileName}` }, null, 2) }] };
+    } catch (error: any) {
+      console.error(chalk.red(`Error appending to file ${fileName}:`), error);
+      return { content: [{ type: "text", text: JSON.stringify({ status: "error", message: `Failed to append to file ${fileName}: ${error.message}` }, null, 2) }], isError: true };
+    }
+  }
 }
 
 
@@ -262,12 +256,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // console.error(chalk.gray(`Arguments: ${JSON.stringify(args)}`)); // Optional: Log arguments
 
   switch (toolName) {
-    case "initialize_memory_bank":
-      return memoryBankServer.initializeMemoryBank(args);
-    case "check_memory_bank_status":
-      return memoryBankServer.checkMemoryBankStatus();
-    case "read_memory_bank_file":
-      return memoryBankServer.readMemoryBankFile(args);
+    case "read_memory_bank":
+      return memoryBankServer.readMemoryBank(args);
     case "append_memory_bank_entry":
       return memoryBankServer.appendMemoryBankEntry(args);
     default:
